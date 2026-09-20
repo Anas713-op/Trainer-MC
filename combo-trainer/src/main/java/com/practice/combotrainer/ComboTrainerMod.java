@@ -32,7 +32,7 @@ public class ComboTrainerMod implements ModInitializer {
     private void registerCommand() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 dispatcher.register(CommandManager.literal("trainingdummy")
-                        .requires(src -> src.hasPermissionLevel(0))
+                        .requires(src -> src.hasPermission(0))
                         .then(CommandManager.literal("summon")
                                 .executes(ctx -> summonDummy(ctx.getSource(), "zombie"))
                                 .then(CommandManager.argument("mob", StringArgumentType.word())
@@ -63,7 +63,7 @@ public class ComboTrainerMod implements ModInitializer {
                 "summon minecraft:%s %.2f %.2f %.2f %s",
                 mobId, x + lookX, y, z + lookZ, nbt);
 
-        source.getServer().getCommandManager().executeWithPrefix(source, cmd);
+       source.getServer().getCommandManager().parseAndExecute(source, cmd);
         source.sendFeedback(() -> Text.literal("[Combo Trainer] Training dummy summoned. "
                 + "It will auto-heal and cannot be killed - swing away."), false);
         return 1;
