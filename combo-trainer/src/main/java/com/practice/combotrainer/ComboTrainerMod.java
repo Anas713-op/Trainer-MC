@@ -1,96 +1,80 @@
-package com.practice.combotrainer;
+package com.practice.combotrainer.client;
 
-import com.mojang.brigadier.arguments.StringArgumentType;
-import net.fabricmc.api.ModInitializer;
-import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
-import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.render.RenderTickCounter;
+import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.server.command.CommandManager;
-import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.server.world.ServerWorld;
+import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.sound.SoundEvent;
+import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
+import net.minecraft.util.hit.EntityHitResult;
+import net.minecraft.util.hit.HitResult;
+import org.lwjgl.glfw.GLFW;
 
-public class ComboTrainerMod implements ModInitializer {
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.Iterator;
+import java.util.List;
 
-    public static final String DUMMY_TAG = "combotrainer_dummy";
-    public static final String MOD_ID = "combotrainer";
+public class ComboTrainerClient implements ClientModInitializer {
+
+    private static final KeyBinding.Category CATEGORY =
+            KeyBinding.Category.create(Identifier.of("combotrainer", "general"));
+
+    private static KeyBinding toggleHudKey;
+    private boolean hudVisible = true;
+
+    private boolean prevAttackPressed = false;
+    private final Deque<Long> recentSwingTimestamps = new ArrayDeque<>();
+
+    private boolean wasSprintingLastTick = false;
+    private int ticksSinceSprintEnded = 999;
+
+    private final List<PendingSwing> pendingSwings = new ArrayList<>();
+
+    private int comboStreak = 0;
+    private int totalHits = 0;
+    private int totalMisses = 0;
+    private int critHits = 0;
+    private int wTapHits = 0;
+    private String lastHitLabel = "-";
+    private int lastHitLabelColor = 0xFFFFFF;
+
+    private static final int SWING_RESOLVE_TICKS = 6;
+
+    private static final class PendingSwing {
+        final LivingEntity target;
+        final float hurtTimeAtSwing;
+        final boolean predictedCrit;
+        final boolean wTapped;
+        int ticksLeft = SWING_RESOLVE_TICKS;
+
+        PendingSwing(LivingEntity target, float hurtTimeAtSwing, boolean predictedCrit, boolean wTapped) {
+            this.target = target;
+            this.hurtTimeAtSwing = hurtTimeAtSwing;
+            this.predictedCrit = predictedCrit;
+            this.wTapped = wTapped;
+        }
+    }
 
     @Override
-    public void onInitialize() {
-        registerCommand();
-        registerDummyUpkeep();
+    public void onInitializeClient() {
+        toggleHudKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.combotrainer.toggle_hud",
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_APOSTROPHE,
+                CATEGORY));
+
+        ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
+        HudRenderCallback.EVENT.register(this::onHudRender);
     }
-
-    private void registerCommand() {
-        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
-                dispatcher.register(CommandManager.literal("trainingdummy")
-                        .then(CommandManager.literal("summon")
-                                .executes(ctx -> summonDummy(ctx.getSource(), "zombie"))
-                                .then(CommandManager.argument("mob", StringArgumentType.word())
-                                        .executes(ctx -> summonDummy(ctx.getSource(), StringArgumentType.getString(ctx, "mob")))))
-                        .then(CommandManager.literal("clear")
-                                .executes(this::clearDummies))));
-    }
-
-    private int summonDummy(ServerCommandSource source, String mobId) {
-        ServerWorld world = source.getWorld();
-        Entity player = source.getEntity();
-        double x = source.getPosition().x;
-        double y = source.getPosition().y;
-        double z = source.getPosition().z;
-
-        double lookX = 0, lookZ = -2;
-        if (player != null) {
-            lookX = -Math.sin(Math.toRadians(player.getYaw())) * 3;
-            lookZ = Math.cos(Math.toRadians(player.getYaw())) * 3;
-        }
-        String nbt = "{NoAI:1b,Silent:1b,PersistenceRequired:1b,Health:20.0f,"
-                + "CustomName:'{\"text\":\"Training Dummy\"}',CustomNameVisible:1b,"
-                + "Tags:[\"" + DUMMY_TAG + "\"]}";
-        String cmd = String.format(java.util.Locale.ROOT,
-                "summon minecraft:%s %.2f %.2f %.2f %s",
-                mobId, x + lookX, y, z + lookZ, nbt);
-
-        source.getServer().getCommandManager().parseAndExecute(source, cmd);
-        source.sendFeedback(() -> Text.literal("[Combo Trainer] Training dummy summoned. "
-                + "It will auto-heal and cannot be killed - swing away."), false);
-        return 1;
-    }
-
-    private int clearDummies(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
-        ServerCommandSource source = ctx.getSource();
-        ServerWorld world = source.getWorld();
-        int[] count = {0};
-        world.getEntitiesByType(net.minecraft.entity.EntityType.ZOMBIE, e -> e.getCommandTags().contains(DUMMY_TAG))
-                .forEach(e -> { e.discard(); count[0]++; });
-        for (Entity e : world.iterateEntities()) {
-            if (e instanceof LivingEntity && e.getCommandTags().contains(DUMMY_TAG) && e.isAlive()) {
-                e.discard();
-                count[0]++;
-            }
-        }
-        int found = count[0];
-        source.sendFeedback(() -> Text.literal("[Combo Trainer] Removed " + found + " training dummy(ies)."), false);
-        return found;
-    }
-
-    private void registerDummyUpkeep() {
-        ServerTickEvents.END_WORLD_TICK.register(world -> {
-            for (Entity e : world.iterateEntities()) {
-                if (e instanceof LivingEntity living && living.getCommandTags().contains(DUMMY_TAG)) {
-                    if (living.getHealth() < living.getMaxHealth()) {
-                        living.setHealth(living.getMaxHealth());
-                    }
-                    if (living.isOnFire()) {
-                        living.extinguish();
-                    }
-                }
-            }
-        });
-
-        ServerLivingEntityEvents.ALLOW_DEATH.register((entity, source, amount) ->
-                !entity.getCommandTags().contains(DUMMY_TAG));
-    }
-}
