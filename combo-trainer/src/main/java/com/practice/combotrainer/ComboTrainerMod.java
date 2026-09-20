@@ -12,12 +12,6 @@ import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 
-/**
- * Common (client+server) logic: safe to run on singleplayer's integrated server.
- * This mod only ever affects entities explicitly tagged "combotrainer_dummy" by
- * the /trainingdummy command below - it never touches other players or mobs,
- * and it never automates attacking or movement.
- */
 public class ComboTrainerMod implements ModInitializer {
 
     public static final String DUMMY_TAG = "combotrainer_dummy";
@@ -32,7 +26,6 @@ public class ComboTrainerMod implements ModInitializer {
     private void registerCommand() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 dispatcher.register(CommandManager.literal("trainingdummy")
-                        .requires(src -> src.hasPermission(0))
                         .then(CommandManager.literal("summon")
                                 .executes(ctx -> summonDummy(ctx.getSource(), "zombie"))
                                 .then(CommandManager.argument("mob", StringArgumentType.word())
@@ -48,9 +41,6 @@ public class ComboTrainerMod implements ModInitializer {
         double y = source.getPosition().y;
         double z = source.getPosition().z;
 
-        // Spawn a few blocks in front of the player, facing them, using the
-        // vanilla /summon command so NBT (NoAI, tag, name) is applied exactly
-        // as vanilla expects - avoids fragile manual entity construction.
         double lookX = 0, lookZ = -2;
         if (player != null) {
             lookX = -Math.sin(Math.toRadians(player.getYaw())) * 3;
@@ -63,7 +53,7 @@ public class ComboTrainerMod implements ModInitializer {
                 "summon minecraft:%s %.2f %.2f %.2f %s",
                 mobId, x + lookX, y, z + lookZ, nbt);
 
-       source.getServer().getCommandManager().parseAndExecute(source, cmd);
+        source.getServer().getCommandManager().parseAndExecute(source, cmd);
         source.sendFeedback(() -> Text.literal("[Combo Trainer] Training dummy summoned. "
                 + "It will auto-heal and cannot be killed - swing away."), false);
         return 1;
@@ -75,7 +65,6 @@ public class ComboTrainerMod implements ModInitializer {
         int[] count = {0};
         world.getEntitiesByType(net.minecraft.entity.EntityType.ZOMBIE, e -> e.getCommandTags().contains(DUMMY_TAG))
                 .forEach(e -> { e.discard(); count[0]++; });
-        // Also sweep all living entities in case a non-zombie mob was used.
         for (Entity e : world.iterateEntities()) {
             if (e instanceof LivingEntity && e.getCommandTags().contains(DUMMY_TAG) && e.isAlive()) {
                 e.discard();
@@ -88,8 +77,6 @@ public class ComboTrainerMod implements ModInitializer {
     }
 
     private void registerDummyUpkeep() {
-        // Keep the dummy topped up so practice sessions aren't interrupted by it dying,
-        // and hard-block death as a safety net.
         ServerTickEvents.END_WORLD_TICK.register(world -> {
             for (Entity e : world.iterateEntities()) {
                 if (e instanceof LivingEntity living && living.getCommandTags().contains(DUMMY_TAG)) {
