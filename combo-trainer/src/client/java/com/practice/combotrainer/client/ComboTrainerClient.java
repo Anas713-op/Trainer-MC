@@ -26,11 +26,6 @@ import java.util.Deque;
 import java.util.Iterator;
 import java.util.List;
 
-/**
- * Client-only: reads input/HUD state and plays local sound cues. It never
- * sends attack packets, never moves the player, and never targets entities
- * on its own - it only reports timing feedback on swings the human made.
- */
 public class ComboTrainerClient implements ClientModInitializer {
 
     private static KeyBinding toggleHudKey;
@@ -42,7 +37,7 @@ public class ComboTrainerClient implements ClientModInitializer {
     private boolean wasSprintingLastTick = false;
     private int ticksSinceSprintEnded = 999;
 
-    private final List<LivingEntity target> LivingEntity targets = new ArrayList<>();
+    private final List<PendingSwing> pendingSwings = new ArrayList<>();
 
     private int comboStreak = 0;
     private int totalHits = 0;
@@ -52,16 +47,16 @@ public class ComboTrainerClient implements ClientModInitializer {
     private String lastHitLabel = "-";
     private int lastHitLabelColor = 0xFFFFFF;
 
-    private static final int SWING_RESOLVE_TICKS = 6; // ~300ms window to confirm a hit landed
+    private static final int SWING_RESOLVE_TICKS = 6;
 
-    private static final class LivingEntity target {
-        final Entity target;
+    private static final class PendingSwing {
+        final LivingEntity target;
         final float hurtTimeAtSwing;
         final boolean predictedCrit;
         final boolean wTapped;
         int ticksLeft = SWING_RESOLVE_TICKS;
 
-        LivingEntity target(Entity target, float hurtTimeAtSwing, boolean predictedCrit, boolean wTapped) {
+        PendingSwing(LivingEntity target, float hurtTimeAtSwing, boolean predictedCrit, boolean wTapped) {
             this.target = target;
             this.hurtTimeAtSwing = hurtTimeAtSwing;
             this.predictedCrit = predictedCrit;
@@ -90,7 +85,6 @@ public class ComboTrainerClient implements ClientModInitializer {
             hudVisible = !hudVisible;
         }
 
-        // Track sprint-reset ("W-tap") window.
         boolean sprintingNow = client.player.isSprinting();
         if (!sprintingNow && wasSprintingLastTick) {
             ticksSinceSprintEnded = 0;
@@ -99,21 +93,18 @@ public class ComboTrainerClient implements ClientModInitializer {
         }
         wasSprintingLastTick = sprintingNow;
 
-        // Edge-detect the attack key ourselves (do NOT call wasPressed() on
-        // attackKey - that queue belongs to vanilla's own attack handling).
         boolean attackPressedNow = client.options.attackKey.isPressed();
         if (attackPressedNow && !prevAttackPressed) {
             onSwing(client);
         }
         prevAttackPressed = attackPressedNow;
 
-        // Trim CPS window to the last 1000ms.
         long now = System.currentTimeMillis();
         while (!recentSwingTimestamps.isEmpty() && now - recentSwingTimestamps.peekFirst() > 1000) {
             recentSwingTimestamps.pollFirst();
         }
 
-        resolveLivingEntity targets();
+        resolvePendingSwings();
     }
 
     private void onSwing(MinecraftClient client) {
@@ -128,7 +119,7 @@ public class ComboTrainerClient implements ClientModInitializer {
         boolean predictedCrit = computeCritConditions(client);
         boolean wTapped = !client.player.isSprinting() && ticksSinceSprintEnded <= 3;
 
-        LivingEntity targets.add(new LivingEntity target(living, living.hurtTime, predictedCrit, wTapped));
+        pendingSwings.add(new PendingSwing(living, living.hurtTime, predictedCrit, wTapped));
     }
 
     private boolean computeCritConditions(MinecraftClient client) {
@@ -141,10 +132,10 @@ public class ComboTrainerClient implements ClientModInitializer {
                 && !player.hasStatusEffect(StatusEffects.BLINDNESS);
     }
 
-    private void resolveLivingEntity targets() {
-        Iterator<LivingEntity target> it = LivingEntity targets.iterator();
+    private void resolvePendingSwings() {
+        Iterator<PendingSwing> it = pendingSwings.iterator();
         while (it.hasNext()) {
-            LivingEntity target swing = it.next();
+            PendingSwing swing = it.next();
             boolean landed = !swing.target.isRemoved() && swing.target.hurtTime > swing.hurtTimeAtSwing;
             if (landed) {
                 totalHits++;
