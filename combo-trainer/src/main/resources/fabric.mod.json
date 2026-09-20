@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "combotrainer",
+  "version": "${version}",
+  "name": "Combo Trainer",
+  "description": "Client-side sword PvP practice tool: tracks CPS, crit timing and sprint-reset (W-tap) timing, plus a self-healing training dummy command. Does not automate combat.",
+  "authors": ["you"],
+  "contact": {},
+  "license": "CC0-1.0",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["com.practice.combotrainer.ComboTrainerMod"],
+    "client": ["com.practice.combotrainer.client.ComboTrainerClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
