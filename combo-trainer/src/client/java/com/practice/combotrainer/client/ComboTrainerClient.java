@@ -42,7 +42,7 @@ public class ComboTrainerClient implements ClientModInitializer {
     private boolean wasSprintingLastTick = false;
     private int ticksSinceSprintEnded = 999;
 
-    private final List<PendingSwing> pendingSwings = new ArrayList<>();
+    private final List<LivingEntity target> LivingEntity targets = new ArrayList<>();
 
     private int comboStreak = 0;
     private int totalHits = 0;
@@ -54,14 +54,14 @@ public class ComboTrainerClient implements ClientModInitializer {
 
     private static final int SWING_RESOLVE_TICKS = 6; // ~300ms window to confirm a hit landed
 
-    private static final class PendingSwing {
+    private static final class LivingEntity target {
         final Entity target;
         final float hurtTimeAtSwing;
         final boolean predictedCrit;
         final boolean wTapped;
         int ticksLeft = SWING_RESOLVE_TICKS;
 
-        PendingSwing(Entity target, float hurtTimeAtSwing, boolean predictedCrit, boolean wTapped) {
+        LivingEntity target(Entity target, float hurtTimeAtSwing, boolean predictedCrit, boolean wTapped) {
             this.target = target;
             this.hurtTimeAtSwing = hurtTimeAtSwing;
             this.predictedCrit = predictedCrit;
@@ -113,7 +113,7 @@ public class ComboTrainerClient implements ClientModInitializer {
             recentSwingTimestamps.pollFirst();
         }
 
-        resolvePendingSwings();
+        resolveLivingEntity targets();
     }
 
     private void onSwing(MinecraftClient client) {
@@ -128,7 +128,7 @@ public class ComboTrainerClient implements ClientModInitializer {
         boolean predictedCrit = computeCritConditions(client);
         boolean wTapped = !client.player.isSprinting() && ticksSinceSprintEnded <= 3;
 
-        pendingSwings.add(new PendingSwing(living, living.hurtTime, predictedCrit, wTapped));
+        LivingEntity targets.add(new LivingEntity target(living, living.hurtTime, predictedCrit, wTapped));
     }
 
     private boolean computeCritConditions(MinecraftClient client) {
@@ -141,10 +141,10 @@ public class ComboTrainerClient implements ClientModInitializer {
                 && !player.hasStatusEffect(StatusEffects.BLINDNESS);
     }
 
-    private void resolvePendingSwings() {
-        Iterator<PendingSwing> it = pendingSwings.iterator();
+    private void resolveLivingEntity targets() {
+        Iterator<LivingEntity target> it = LivingEntity targets.iterator();
         while (it.hasNext()) {
-            PendingSwing swing = it.next();
+            LivingEntity target swing = it.next();
             boolean landed = !swing.target.isRemoved() && swing.target.hurtTime > swing.hurtTimeAtSwing;
             if (landed) {
                 totalHits++;
