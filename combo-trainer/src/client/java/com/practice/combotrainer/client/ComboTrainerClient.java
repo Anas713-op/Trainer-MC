@@ -1,209 +1,96 @@
-package com.practice.combotrainer.client;
+package com.practice.combotrainer;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.render.RenderTickCounter;
-import net.minecraft.client.sound.PositionedSoundInstance;
-import net.minecraft.client.util.InputUtil;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.effect.StatusEffects;
-import net.minecraft.sound.SoundEvents;
+import net.minecraft.server.command.CommandManager;
+import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
-import org.lwjgl.glfw.GLFW;
 
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.Iterator;
-import java.util.List;
+public class ComboTrainerMod implements ModInitializer {
 
-public class ComboTrainerClient implements ClientModInitializer {
-
-    private static KeyBinding toggleHudKey;
-    private boolean hudVisible = true;
-
-    private boolean prevAttackPressed = false;
-    private final Deque<Long> recentSwingTimestamps = new ArrayDeque<>();
-
-    private boolean wasSprintingLastTick = false;
-    private int ticksSinceSprintEnded = 999;
-
-    private final List<PendingSwing> pendingSwings = new ArrayList<>();
-
-    private int comboStreak = 0;
-    private int totalHits = 0;
-    private int totalMisses = 0;
-    private int critHits = 0;
-    private int wTapHits = 0;
-    private String lastHitLabel = "-";
-    private int lastHitLabelColor = 0xFFFFFF;
-
-    private static final int SWING_RESOLVE_TICKS = 6;
-
-    private static final class PendingSwing {
-        final LivingEntity target;
-        final float hurtTimeAtSwing;
-        final boolean predictedCrit;
-        final boolean wTapped;
-        int ticksLeft = SWING_RESOLVE_TICKS;
-
-        PendingSwing(LivingEntity target, float hurtTimeAtSwing, boolean predictedCrit, boolean wTapped) {
-            this.target = target;
-            this.hurtTimeAtSwing = hurtTimeAtSwing;
-            this.predictedCrit = predictedCrit;
-            this.wTapped = wTapped;
-        }
-    }
+    public static final String DUMMY_TAG = "combotrainer_dummy";
+    public static final String MOD_ID = "combotrainer";
 
     @Override
-    public void onInitializeClient() {
-        toggleHudKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.combotrainer.toggle_hud",
-                InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_APOSTROPHE,
-                "category.combotrainer"));
-
-        ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
-        HudRenderCallback.EVENT.register(this::onHudRender);
+    public void onInitialize() {
+        registerCommand();
+        registerDummyUpkeep();
     }
 
-    private void onClientTick(MinecraftClient client) {
-        if (client.player == null || client.world == null) {
-            return;
-        }
-
-        while (toggleHudKey.wasPressed()) {
-            hudVisible = !hudVisible;
-        }
-
-        boolean sprintingNow = client.player.isSprinting();
-        if (!sprintingNow && wasSprintingLastTick) {
-            ticksSinceSprintEnded = 0;
-        } else {
-            ticksSinceSprintEnded = Math.min(ticksSinceSprintEnded + 1, 999);
-        }
-        wasSprintingLastTick = sprintingNow;
-
-        boolean attackPressedNow = client.options.attackKey.isPressed();
-        if (attackPressedNow && !prevAttackPressed) {
-            onSwing(client);
-        }
-        prevAttackPressed = attackPressedNow;
-
-        long now = System.currentTimeMillis();
-        while (!recentSwingTimestamps.isEmpty() && now - recentSwingTimestamps.peekFirst() > 1000) {
-            recentSwingTimestamps.pollFirst();
-        }
-
-        resolvePendingSwings();
+    private void registerCommand() {
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                dispatcher.register(CommandManager.literal("trainingdummy")
+                        .then(CommandManager.literal("summon")
+                                .executes(ctx -> summonDummy(ctx.getSource(), "zombie"))
+                                .then(CommandManager.argument("mob", StringArgumentType.word())
+                                        .executes(ctx -> summonDummy(ctx.getSource(), StringArgumentType.getString(ctx, "mob")))))
+                        .then(CommandManager.literal("clear")
+                                .executes(this::clearDummies))));
     }
 
-    private void onSwing(MinecraftClient client) {
-        recentSwingTimestamps.addLast(System.currentTimeMillis());
+    private int summonDummy(ServerCommandSource source, String mobId) {
+        ServerWorld world = source.getWorld();
+        Entity player = source.getEntity();
+        double x = source.getPosition().x;
+        double y = source.getPosition().y;
+        double z = source.getPosition().z;
 
-        HitResult target = client.crosshairTarget;
-        if (!(target instanceof EntityHitResult entityHit) || !(entityHit.getEntity() instanceof LivingEntity living)) {
-            registerMiss("MISS (no target)", 0xFF5555);
-            return;
+        double lookX = 0, lookZ = -2;
+        if (player != null) {
+            lookX = -Math.sin(Math.toRadians(player.getYaw())) * 3;
+            lookZ = Math.cos(Math.toRadians(player.getYaw())) * 3;
         }
+        String nbt = "{NoAI:1b,Silent:1b,PersistenceRequired:1b,Health:20.0f,"
+                + "CustomName:'{\"text\":\"Training Dummy\"}',CustomNameVisible:1b,"
+                + "Tags:[\"" + DUMMY_TAG + "\"]}";
+        String cmd = String.format(java.util.Locale.ROOT,
+                "summon minecraft:%s %.2f %.2f %.2f %s",
+                mobId, x + lookX, y, z + lookZ, nbt);
 
-        boolean predictedCrit = computeCritConditions(client);
-        boolean wTapped = !client.player.isSprinting() && ticksSinceSprintEnded <= 3;
-
-        pendingSwings.add(new PendingSwing(living, living.hurtTime, predictedCrit, wTapped));
+        source.getServer().getCommandManager().parseAndExecute(source, cmd);
+        source.sendFeedback(() -> Text.literal("[Combo Trainer] Training dummy summoned. "
+                + "It will auto-heal and cannot be killed - swing away."), false);
+        return 1;
     }
 
-    private boolean computeCritConditions(MinecraftClient client) {
-        var player = client.player;
-        return player.fallDistance > 0.0F
-                && !player.isOnGround()
-                && !player.isClimbing()
-                && !player.isTouchingWater()
-                && !player.hasVehicle()
-                && !player.hasStatusEffect(StatusEffects.BLINDNESS);
-    }
-
-    private void resolvePendingSwings() {
-        Iterator<PendingSwing> it = pendingSwings.iterator();
-        while (it.hasNext()) {
-            PendingSwing swing = it.next();
-            boolean landed = !swing.target.isRemoved() && swing.target.hurtTime > swing.hurtTimeAtSwing;
-            if (landed) {
-                totalHits++;
-                comboStreak++;
-                StringBuilder label = new StringBuilder("HIT");
-                if (swing.predictedCrit) {
-                    critHits++;
-                    label.append(" + CRIT");
-                }
-                if (swing.wTapped) {
-                    wTapHits++;
-                    label.append(" + W-TAP");
-                }
-                setLastHitLabel(label.toString(), swing.predictedCrit ? 0xFFD700 : 0x55FF55);
-                playCue(swing.predictedCrit ? SoundEvents.ENTITY_PLAYER_ATTACK_CRIT : SoundEvents.ENTITY_PLAYER_ATTACK_STRONG, swing.predictedCrit ? 1.4f : 1.0f);
-                it.remove();
-            } else if (--swing.ticksLeft <= 0) {
-                registerMiss("MISS", 0xFF5555);
-                it.remove();
+    private int clearDummies(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
+        ServerCommandSource source = ctx.getSource();
+        ServerWorld world = source.getWorld();
+        int[] count = {0};
+        world.getEntitiesByType(net.minecraft.entity.EntityType.ZOMBIE, e -> e.getCommandTags().contains(DUMMY_TAG))
+                .forEach(e -> { e.discard(); count[0]++; });
+        for (Entity e : world.iterateEntities()) {
+            if (e instanceof LivingEntity && e.getCommandTags().contains(DUMMY_TAG) && e.isAlive()) {
+                e.discard();
+                count[0]++;
             }
         }
+        int found = count[0];
+        source.sendFeedback(() -> Text.literal("[Combo Trainer] Removed " + found + " training dummy(ies)."), false);
+        return found;
     }
 
-    private void registerMiss(String label, int color) {
-        totalMisses++;
-        comboStreak = 0;
-        setLastHitLabel(label, color);
-        playCue(SoundEvents.ENTITY_PLAYER_ATTACK_WEAK, 0.7f);
-    }
+    private void registerDummyUpkeep() {
+        ServerTickEvents.END_WORLD_TICK.register(world -> {
+            for (Entity e : world.iterateEntities()) {
+                if (e instanceof LivingEntity living && living.getCommandTags().contains(DUMMY_TAG)) {
+                    if (living.getHealth() < living.getMaxHealth()) {
+                        living.setHealth(living.getMaxHealth());
+                    }
+                    if (living.isOnFire()) {
+                        living.extinguish();
+                    }
+                }
+            }
+        });
 
-    private void setLastHitLabel(String label, int color) {
-        lastHitLabel = label;
-        lastHitLabelColor = color;
-    }
-
-    private void playCue(net.minecraft.sound.SoundEvent sound, float pitch) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.player != null) {
-            client.getSoundManager().play(PositionedSoundInstance.master(sound, pitch, 0.5f));
-        }
-    }
-
-    private void onHudRender(DrawContext context, RenderTickCounter tickCounter) {
-        if (!hudVisible) {
-            return;
-        }
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.player == null || client.options.hudHidden) {
-            return;
-        }
-
-        RenderSystem.enableBlend();
-        int x = 6;
-        int y = 6;
-        int lineHeight = 10;
-
-        context.drawTextWithShadow(client.textRenderer, Text.literal("Combo Trainer"), x, y, 0x55CCFF);
-        y += lineHeight;
-        context.drawTextWithShadow(client.textRenderer, Text.literal("CPS: " + recentSwingTimestamps.size()), x, y, 0xFFFFFF);
-        y += lineHeight;
-        context.drawTextWithShadow(client.textRenderer, Text.literal("Combo streak: " + comboStreak), x, y, 0xFFFFFF);
-        y += lineHeight;
-        int totalSwings = totalHits + totalMisses;
-        String acc = totalSwings == 0 ? "-" : (100 * totalHits / totalSwings) + "%";
-        context.drawTextWithShadow(client.textRenderer, Text.literal("Accuracy: " + acc + " (" + totalHits + "/" + totalSwings + ")"), x, y, 0xFFFFFF);
-        y += lineHeight;
-        context.drawTextWithShadow(client.textRenderer, Text.literal("Crits: " + critHits + "  W-Taps: " + wTapHits), x, y, 0xFFFFFF);
-        y += lineHeight;
-        context.drawTextWithShadow(client.textRenderer, Text.literal("Last: " + lastHitLabel), x, y, lastHitLabelColor);
+        ServerLivingEntityEvents.ALLOW_DEATH.register((entity, source, amount) ->
+                !entity.getCommandTags().contains(DUMMY_TAG));
     }
 }
